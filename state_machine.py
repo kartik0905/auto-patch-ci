@@ -29,7 +29,7 @@ async def triage_node(state: AgentState) -> AgentState:
     print("--- \033[94mTRIAGE AGENT (8B)\033[0m ---")
     await groq_rate_limiter.acquire()
     
-    llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
+    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
     structured_llm = llm.with_structured_output(TriageOutput)
     
     prompt = PromptTemplate.from_template(
@@ -68,23 +68,37 @@ async def engineer_node(state: AgentState) -> AgentState:
     print("-> Successfully generated source code patch.")
     return {"patch": result.patch}
 
+from sandbox import run_in_sandbox
+import os
+
 async def test_node(state: AgentState) -> AgentState:
-    print("--- \033[92mTEST NODE (SANDBOX STUB)\033[0m ---")
+    print("--- \033[92mTEST NODE (SECURE SANDBOX)\033[0m ---")
     iterations = state.get("iterations", 0) + 1
     
-    # In Phase 3, this function will create an Alpine/Ubuntu Docker container, 
-    # mount the patch, run pytest, and collect standard output natively.
-    # For now, we simulate a mock output based on iteration count.
+    workspace_dir = os.getcwd()
+    file_path = state["file_path"]
     
-    if iterations < 3:
-        test_result = "fail"
-        new_error_log = f"Simulated Docker sandbox test error: Assertion failed at iteration {iterations}."
-        print(f"-> Test failed (Simulated). Iteration {iterations}")
-        return {"test_result": test_result, "iterations": iterations, "error_log": new_error_log}
+    # Calculate relative path to overlay correctly in Docker
+    try:
+        file_relative_path = os.path.relpath(file_path, workspace_dir)
+    except ValueError:
+        file_relative_path = file_path
+
+    print(f"-> Spinning up ephemeral container to test '{file_relative_path}'...")
+    
+    result = run_in_sandbox(
+        workspace_dir=workspace_dir,
+        file_relative_path=file_relative_path,
+        patch_code=state["patch"]
+    )
+    
+    if result["status"] == "fail":
+        new_error_log = result["logs"]
+        print(f"-> Test failed in Docker Sandbox! Logs captured. Iteration {iterations}")
+        return {"test_result": "fail", "iterations": iterations, "error_log": new_error_log}
     else:
-        test_result = "pass"
-        print(f"-> Test passed (Simulated). Iteration {iterations}")
-        return {"test_result": test_result, "iterations": iterations}
+        print(f"-> Test passed in Docker Sandbox! Iteration {iterations}")
+        return {"test_result": "pass", "iterations": iterations}
 
 def route_after_test(state: AgentState):
     if state["test_result"] == "pass":
